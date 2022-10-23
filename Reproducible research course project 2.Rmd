@@ -1,0 +1,167 @@
+---
+title: "Reproducible research course project 2"
+output: pdf_document
+date: '2022-10-21'
+---
+
+# Synonpsis
+
+In this report, we aim to analyze the impact of different weather events on public health and economy based on the storm database collected from the U.S. National Oceanic and Atmospheric Administration's (NOAA) from 1950 - 2011. We will use the estimates of fatalities, injuries, property and crop damage to decide which types of event are most harmful to the population health and economy. From these data, we found that excessive heat and tornado are most harmful with respect to population health, while flood, drought, and hurricane/typhoon have the greatest economic consequences.
+
+## set knitr options
+```{r}
+knitr::opts_chunk$set(echo = TRUE, fig.path='figures/',cache = TRUE)
+
+```
+```{r}
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+
+
+# Data Processing
+Downloading data if it isnt already in working directory.
+```{r,cache=TRUE}
+if (!file.exists("./data/StormData.csv.bz2")) {
+  download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2",
+                destfile = "./data/StormData.csv.bz2")
+}
+```
+Reading data 
+```{r,cache=TRUE}
+stormData <- read.csv("./data/stormData.csv.bz2")
+```
+
+Structure of Data
+```{r}
+dim(stormData)
+names(stormData)
+```
+There are 902297 rows and 37 columns in total.
+
+
+Extracting variables of interest for analysis of weather impact on health and economy ans checking for NA values
+
+```{r}
+vars <- c( "EVTYPE", "FATALITIES", "INJURIES", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")
+mydata <- stormData[, vars]
+sum(is.na(mydata))
+```
+
+We will group events like TUNDERSTORM WIND, TUNDERSTORM WINDS, HIGH WIND, etc. by containing the keyword ‘WIND’ as one event WIND. And we will transform other types of events in a similar way. New variable EVENTS is the transform variable of EVTYPE that have different types of events: HEAT, FLOOD, etc., and type OTHER for events in which name the keyword is not found.
+
+```{r}
+# create a new variable EVENT to transform variable EVTYPE in groups
+mydata$EVENT <- "OTHER"
+# group by keyword in EVTYPE
+mydata$EVENT[grep("HAIL", mydata$EVTYPE, ignore.case = TRUE)] <- "HAIL"
+mydata$EVENT[grep("HEAT", mydata$EVTYPE, ignore.case = TRUE)] <- "HEAT"
+mydata$EVENT[grep("FLOOD", mydata$EVTYPE, ignore.case = TRUE)] <- "FLOOD"
+mydata$EVENT[grep("WIND", mydata$EVTYPE, ignore.case = TRUE)] <- "WIND"
+mydata$EVENT[grep("STORM", mydata$EVTYPE, ignore.case = TRUE)] <- "STORM"
+mydata$EVENT[grep("SNOW", mydata$EVTYPE, ignore.case = TRUE)] <- "SNOW"
+mydata$EVENT[grep("TORNADO", mydata$EVTYPE, ignore.case = TRUE)] <- "TORNADO"
+mydata$EVENT[grep("WINTER", mydata$EVTYPE, ignore.case = TRUE)] <- "WINTER"
+mydata$EVENT[grep("RAIN", mydata$EVTYPE, ignore.case = TRUE)] <- "RAIN"
+# listing the transformed event types 
+sort(table(mydata$EVENT))
+
+```
+
+There is some mess in units, so we transform those variables in one unit (dollar) variable by the following rule:
+* K or k: thousand dollars (10^3)
+* M or m: million dollars (10^6)
+* B or b: billion dollars (10^9)
+* the rest would be consider as dollars
+```{r}
+mydata$PROPDMGEXP <- as.character(mydata$PROPDMGEXP)
+mydata$PROPDMGEXP[!grepl("K|M|B", mydata$PROPDMGEXP, 
+                         ignore.case = TRUE)] <- 0 # everything exept K,M,B is dollar
+mydata$PROPDMGEXP[grep("K", mydata$PROPDMGEXP, 
+                       ignore.case = TRUE)] <- "3"
+mydata$PROPDMGEXP[grep("M", mydata$PROPDMGEXP, 
+                       ignore.case = TRUE)] <- "6"
+mydata$PROPDMGEXP[grep("B", mydata$PROPDMGEXP, 
+                       ignore.case = TRUE)] <- "9"
+mydata$PROPDMGEXP <- as.numeric(as.character(mydata$PROPDMGEXP))
+mydata$property.damage <- mydata$PROPDMG * 10^mydata$PROPDMGEXP
+
+mydata$CROPDMGEXP <- as.character(mydata$CROPDMGEXP)
+mydata$CROPDMGEXP[!grepl("K|M|B", mydata$CROPDMGEXP, 
+                         ignore.case = TRUE)] <- 0 # everything exept K,M,B is dollar
+mydata$CROPDMGEXP[grep("K", mydata$CROPDMGEXP, 
+                       ignore.case = TRUE)] <- "3"
+mydata$CROPDMGEXP[grep("M", mydata$CROPDMGEXP, 
+                       ignore.case = TRUE)] <- "6"
+mydata$CROPDMGEXP[grep("B", mydata$CROPDMGEXP, 
+                       ignore.case = TRUE)] <- "9"
+mydata$CROPDMGEXP <- as.numeric(as.character(mydata$CROPDMGEXP))
+mydata$crop.damage <- mydata$CROPDMG * 10^mydata$CROPDMGEXP
+
+```
+
+
+## Analysis
+
+Calculating fatalities and injuries per event
+```{r}
+# aggregate FATALITIES by type of EVENT
+agg.fatalities <- ddply(mydata, .(EVENT), summarize, 
+                        Fatalities = sum(FATALITIES, na.rm = TRUE))
+
+# aggregate INJURIES by type of EVENT
+agg.injuries <- ddply(mydata, .(EVENT), summarize, 
+                      Injuries = sum(INJURIES, na.rm = TRUE))
+
+# combine all
+#agg.health <- cbind(agg.fatalities, agg.injuries)
+
+healthData <- join (agg.fatalities, agg.injuries, by="EVENT", type="inner")
+healthData
+```
+
+
+Calculating Property damage and crop damage per event
+```{r}
+# aggregate PropDamage by type of EVENT
+agg.prop <- ddply(mydata, .(EVENT), summarize, 
+                  PropertyDamage = sum(property.damage, na.rm = TRUE))
+
+# aggregate INJURIES by type of EVENT
+agg.crop <- ddply(mydata, .(EVENT), summarize, 
+                  CropDamage = sum(crop.damage, na.rm = TRUE))
+
+# combine all
+#agg.economic <- rbind(agg.prop, agg.crop)
+
+
+economicData <- join (agg.prop, agg.crop, by="EVENT", type="inner")
+economicData
+```
+
+
+# Result
+
+### To find which type of events are more harmful to population health
+
+```{r}
+data <- healthData %>% 
+        gather("Type", "Value", -EVENT)
+ggplot(data, aes(x = EVENT, y = Value, fill = Type)) +
+   geom_bar(stat = "identity")
+
+```
+From graph it is evident that tornadoes are responsible for the greatest number of fatalities and injuries.
+
+
+### To find which type of events have greatest economic consequence
+```{r}
+data <- economicData %>% 
+        gather("Type", "Value", -EVENT)
+ggplot(data, aes(x = EVENT, y = Value, fill = Type)) +
+   geom_bar(stat = "identity")
+```
+  Floods are responsible for causing the most property damage and crop damage costs.
